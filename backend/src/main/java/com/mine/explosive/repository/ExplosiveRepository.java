@@ -21,4 +21,9 @@ public interface ExplosiveRepository extends JpaRepository<Explosive, Long> {
     Integer sumAvailableQuantityByType(ExplosiveType type);
 
     boolean existsBySerialNo(String serialNo);
+
+    long countByTypeAndAvailableQuantityGreaterThan(ExplosiveType type, Integer quantity);
+
+    @Query("SELECT COUNT(e) > 0 FROM Explosive e WHERE e.serialNo = :serialNo AND e.availableQuantity >= :quantity")
+    boolean hasSufficientQuantity(String serialNo, Integer quantity);
 }

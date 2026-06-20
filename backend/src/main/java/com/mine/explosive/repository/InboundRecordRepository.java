@@ -29,4 +29,10 @@ public interface InboundRecordRepository extends JpaRepository<InboundRecord, Lo
 
     @Query("SELECT i FROM InboundRecord i WHERE i.application.id = :applicationId AND i.type = :type")
     List<InboundRecord> findByApplicationIdAndType(Long applicationId, ExplosiveType type);
+
+    @Query("SELECT i FROM InboundRecord i WHERE i.application.id = :applicationId AND i.explosiveSerialNo = :serialNo")
+    List<InboundRecord> findByApplicationIdAndSerialNo(Long applicationId, String serialNo);
+
+    @Query("SELECT COALESCE(SUM(i.returnedQuantity + i.usedQuantity), 0) FROM InboundRecord i WHERE i.application.id = :applicationId AND i.explosiveSerialNo = :serialNo")
+    Integer sumVerifiedByApplicationIdAndSerialNo(Long applicationId, String serialNo);
 }

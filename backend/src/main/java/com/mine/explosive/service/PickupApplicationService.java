@@ -27,7 +27,7 @@ import java.util.List;
 public class PickupApplicationService {
 
     @Autowired
-    public PickupApplicationService(PickupApplicationRepository applicationRepository, ShiftRepository shiftRepository, BlasterRepository blasterRepository, WorkPlanRepository workPlanRepository, ExplosiveRepository explosiveRepository, AnomalyRecordRepository anomalyRecordRepository, UserRepository userRepository) {
+    public PickupApplicationService(PickupApplicationRepository applicationRepository, ShiftRepository shiftRepository, BlasterRepository blasterRepository, WorkPlanRepository workPlanRepository, ExplosiveRepository explosiveRepository, AnomalyRecordRepository anomalyRecordRepository, UserRepository userRepository, HoleChangeRecordRepository holeChangeRepository) {
         this.applicationRepository = applicationRepository;
         this.shiftRepository = shiftRepository;
         this.blasterRepository = blasterRepository;
@@ -35,6 +35,7 @@ public class PickupApplicationService {
         this.explosiveRepository = explosiveRepository;
         this.anomalyRecordRepository = anomalyRecordRepository;
         this.userRepository = userRepository;
+        this.holeChangeRepository = holeChangeRepository;
     }
 
     private final PickupApplicationRepository applicationRepository;
@@ -44,6 +45,7 @@ public class PickupApplicationService {
     private final ExplosiveRepository explosiveRepository;
     private final AnomalyRecordRepository anomalyRecordRepository;
     private final UserRepository userRepository;
+    private final HoleChangeRecordRepository holeChangeRepository;
 
     @Transactional
     public PickupApplication createApplication(PickupApplicationRequest request, User blaster) {
@@ -63,17 +65,21 @@ public class PickupApplicationService {
         }
 
         Blaster blasterInfo = blasterRepository.findByUserId(blaster.getId())
-                .orElseThrow(() -> new BusinessException("未找到爆破员信息"));
+                .orElseThrow(() -> new BusinessException("未找到爆破员信息，无法进行作业证校验"));
 
         if (blasterInfo.isLicenseExpired()) {
             recordAnomaly(shift, null, AnomalyType.EXPIRED_LICENSE,
-                    "爆破员作业证已过期，有效期至: " + blasterInfo.getLicenseExpiryDate(), blaster);
-            throw new BusinessException("作业证已过期，有效期至: " + blasterInfo.getLicenseExpiryDate() + "，无法领用器材");
+                    "爆破员作业证已过期，有效期至: " + blasterInfo.getLicenseExpiryDate() + "，作业证编号: " + blasterInfo.getLicenseNo(), blaster);
+            throw new BusinessException("作业证已过期，有效期至: " + blasterInfo.getLicenseExpiryDate() + "，无法领用器材。作业证编号: " + blasterInfo.getLicenseNo());
         }
 
         if (blasterInfo.getLicenseExpiryDate().isBefore(LocalDate.now().plusDays(7))) {
             recordAnomaly(shift, null, AnomalyType.EXPIRED_LICENSE,
-                    "爆破员作业证即将过期，有效期至: " + blasterInfo.getLicenseExpiryDate(), blaster);
+                    "爆破员作业证即将过期，有效期至: " + blasterInfo.getLicenseExpiryDate() + "，作业证编号: " + blasterInfo.getLicenseNo(), blaster);
+        }
+
+        if (holeChangeRepository.existsPendingByShiftId(shift.getId())) {
+            throw new BusinessException("存在待复核的孔数变更申请，请先完成孔数变更复核后再领用器材");
         }
 
         ApplicationStatus status = ApplicationStatus.PENDING;
@@ -81,46 +87,57 @@ public class PickupApplicationService {
 
         if (shift.getWorkPlan() != null) {
             WorkPlan workPlan = shift.getWorkPlan();
+            int designedHoles = workPlan.getDesignedHoles();
             int designedDetonators = workPlan.getEstimatedDetonators();
             int designedExplosives = workPlan.getEstimatedExplosives();
-            int designedHoles = workPlan.getDesignedHoles();
+
+            int effectiveHoles = shift.getActualHoles() != null && shift.getActualHoles() > 0
+                    ? shift.getActualHoles() : designedHoles;
 
             double detonatorPerHole = designedHoles > 0 ? designedDetonators * 1.0 / designedHoles : 1.0;
             double explosivePerHole = designedHoles > 0 ? designedExplosives * 1.0 / designedHoles : 1.0;
-            double expectedDetonatorsByHoles = designedHoles * detonatorPerHole;
-            double expectedExplosivesByHoles = designedHoles * explosivePerHole;
 
-            double detonatorDiffPercent = designedDetonators > 0 
-                ? Math.abs(request.getDetonatorQuantity() - designedDetonators) * 100.0 / designedDetonators 
-                : 100.0;
-            double explosiveDiffPercent = designedExplosives > 0 
-                ? Math.abs(request.getExplosiveQuantity() - designedExplosives) * 100.0 / designedExplosives 
-                : 100.0;
+            int expectedDetonatorsByHoles = (int) Math.ceil(effectiveHoles * detonatorPerHole);
+            int expectedExplosivesByHoles = (int) Math.ceil(effectiveHoles * explosivePerHole);
 
-            boolean holeCountMismatch = request.getDetonatorQuantity() != designedHoles;
-            boolean detonatorMismatch = detonatorDiffPercent > 10.0;
-            boolean explosiveMismatch = explosiveDiffPercent > 10.0;
+            int detonatorTolerance = Math.max(1, (int) Math.ceil(expectedDetonatorsByHoles * 0.1));
+            int explosiveTolerance = Math.max(1, (int) Math.ceil(expectedExplosivesByHoles * 0.1));
 
-            if (holeCountMismatch || detonatorMismatch || explosiveMismatch) {
+            boolean holeCountMismatch = request.getDetonatorQuantity() != effectiveHoles
+                    && Math.abs(request.getDetonatorQuantity() - effectiveHoles) > detonatorTolerance;
+
+            boolean detonatorMismatch = Math.abs(request.getDetonatorQuantity() - expectedDetonatorsByHoles) > detonatorTolerance;
+            boolean explosiveMismatch = Math.abs(request.getExplosiveQuantity() - expectedExplosivesByHoles) > explosiveTolerance;
+
+            boolean hasHoleChange = shift.getActualHoles() != null && !shift.getActualHoles().equals(designedHoles);
+            boolean changeNeedsReview = hasHoleChange && (detonatorMismatch || explosiveMismatch);
+
+            if (holeCountMismatch || detonatorMismatch || explosiveMismatch || changeNeedsReview) {
                 status = ApplicationStatus.NEED_REVIEW;
                 StringBuilder sb = new StringBuilder();
+                if (hasHoleChange) {
+                    sb.append(String.format("现场孔数已从设计%d个调整为%d个; ", designedHoles, effectiveHoles));
+                }
                 if (holeCountMismatch) {
-                    sb.append(String.format("雷管数量与设计孔数不匹配: 设计孔数%d个, 设计雷管%d发(每孔%.1f发), 申请雷管%d发; ",
-                            designedHoles, designedDetonators, detonatorPerHole, request.getDetonatorQuantity()));
+                    sb.append(String.format("雷管数量与当前孔数不匹配: 当前孔数%d个(允许偏差±%d), 申请雷管%d发; ",
+                            effectiveHoles, detonatorTolerance, request.getDetonatorQuantity()));
                 }
                 if (detonatorMismatch) {
-                    sb.append(String.format("雷管数量与设计量偏差%.1f%%(设计%d发, 申请%d发); ",
-                            detonatorDiffPercent, designedDetonators, request.getDetonatorQuantity()));
+                    sb.append(String.format("雷管数量与计算量偏差过大: 按当前孔数计算需%d发(允许偏差±%d), 申请%d发; ",
+                            expectedDetonatorsByHoles, detonatorTolerance, request.getDetonatorQuantity()));
                 }
                 if (explosiveMismatch) {
-                    sb.append(String.format("炸药数量与设计量偏差%.1f%%(设计%dkg, 申请%dkg); ",
-                            explosiveDiffPercent, designedExplosives, request.getExplosiveQuantity()));
+                    sb.append(String.format("炸药数量与计算量偏差过大: 按当前孔数计算需%dkg(允许偏差±%d), 申请%dkg; ",
+                            expectedExplosivesByHoles, explosiveTolerance, request.getExplosiveQuantity()));
+                }
+                if (sb.length() == 0) {
+                    sb.append("领用数量存在异常，请安全负责人复核");
                 }
                 reviewRemark = sb.toString();
                 recordAnomaly(shift, null, AnomalyType.QUANTITY_MISMATCH, reviewRemark, blaster);
             }
         } else {
-            throw new BusinessException("当班作业未关联作业计划，无法提交领用申请");
+            throw new BusinessException("当班作业未关联作业计划，无法校验设计孔数，请先关联作业计划后再提交领用申请");
         }
 
         Integer availableDetonators = explosiveRepository.sumAvailableQuantityByType(
@@ -129,10 +146,22 @@ public class PickupApplicationService {
                 com.mine.explosive.enums.ExplosiveType.EXPLOSIVE);
 
         if (availableDetonators != null && availableDetonators < request.getDetonatorQuantity()) {
-            throw new BusinessException("雷管库存不足，现有库存: " + availableDetonators);
+            throw new BusinessException("雷管库存不足，现有库存: " + availableDetonators + "发，申请数量: " + request.getDetonatorQuantity() + "发");
         }
         if (availableExplosives != null && availableExplosives < request.getExplosiveQuantity()) {
-            throw new BusinessException("炸药库存不足，现有库存: " + availableExplosives + "kg");
+            throw new BusinessException("炸药库存不足，现有库存: " + availableExplosives + "kg，申请数量: " + request.getExplosiveQuantity() + "kg");
+        }
+
+        long validSerialCount = explosiveRepository.countByTypeAndAvailableQuantityGreaterThan(
+                com.mine.explosive.enums.ExplosiveType.DETONATOR, 0);
+        long validExplosiveCount = explosiveRepository.countByTypeAndAvailableQuantityGreaterThan(
+                com.mine.explosive.enums.ExplosiveType.EXPLOSIVE, 0);
+
+        if (validSerialCount == 0) {
+            throw new BusinessException("仓库中无有效的雷管器材编号，请先入库雷管");
+        }
+        if (validExplosiveCount == 0) {
+            throw new BusinessException("仓库中无有效的炸药器材编号，请先入库炸药");
         }
 
         PickupApplication application = new PickupApplication();
@@ -166,6 +195,10 @@ public class PickupApplicationService {
 
         if (application.getStatus() != ApplicationStatus.NEED_REVIEW) {
             throw new BusinessException("该申请不需要复核");
+        }
+
+        if (holeChangeRepository.existsPendingByShiftId(application.getShift().getId())) {
+            throw new BusinessException("该申请关联的当班作业存在待复核的孔数变更，请先完成孔数变更复核");
         }
 
         application.setStatus(request.getApproved() ? ApplicationStatus.APPROVED : ApplicationStatus.REJECTED);

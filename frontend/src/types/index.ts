@@ -6,7 +6,7 @@ export type ApplicationStatus = 'PENDING' | 'APPROVED' | 'REJECTED' | 'NEED_REVI
 
 export type ShiftStatus = 'OPEN' | 'IN_PROGRESS' | 'WAITING_RETURN' | 'WAITING_VERIFY' | 'CLOSED';
 
-export type AnomalyType = 'EXPIRED_LICENSE' | 'QUANTITY_MISMATCH' | 'NOT_RETURNED' | 'DAMAGE' | 'OTHER';
+export type AnomalyType = 'EXPIRED_LICENSE' | 'QUANTITY_MISMATCH' | 'NOT_RETURNED' | 'DAMAGE' | 'MISFIRE' | 'OTHER';
 
 export interface User {
   id: number;
@@ -45,6 +45,9 @@ export interface Shift {
   endTime?: string;
   remarks?: string;
   workPlan?: WorkPlan;
+  actualHoles: number;
+  remainingCleared: boolean;
+  misfireHandled: boolean;
 }
 
 export interface WorkPlan {
@@ -138,4 +141,25 @@ export interface AnomalyRecord {
   handledAt?: string;
   handlingResult?: string;
   resolved: boolean;
+}
+
+export interface HoleChangeRecord {
+  id: number;
+  changeNo: string;
+  shift: Shift;
+  application?: PickupApplication;
+  originalHoles: number;
+  newHoles: number;
+  holeDifference: number;
+  originalDetonators: number;
+  newDetonators: number;
+  originalExplosives: number;
+  newExplosives: number;
+  changeReason: string;
+  requestedBy: User;
+  reviewedBy?: User;
+  status: ApplicationStatus;
+  reviewRemark?: string;
+  requestedAt: string;
+  reviewedAt?: string;
 }

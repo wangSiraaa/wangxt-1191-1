@@ -1,5 +1,6 @@
 package com.mine.explosive.util;
 
+import com.mine.explosive.entity.HoleChangeRecord;
 import com.mine.explosive.entity.PickupApplication;
 import com.mine.explosive.entity.Shift;
 import com.mine.explosive.entity.WorkPlan;
@@ -43,6 +44,26 @@ public class HibernateUtil {
         }
         if (app.getReviewer() != null) {
             Hibernate.initialize(app.getReviewer());
+        }
+    }
+
+    public static void initHoleChangeRecord(HoleChangeRecord record) {
+        if (record == null) {
+            return;
+        }
+        if (record.getShift() != null) {
+            Hibernate.initialize(record.getShift());
+            initShift(record.getShift());
+        }
+        if (record.getApplication() != null) {
+            Hibernate.initialize(record.getApplication());
+            initPickupApplication(record.getApplication());
+        }
+        if (record.getRequestedBy() != null) {
+            Hibernate.initialize(record.getRequestedBy());
+        }
+        if (record.getReviewedBy() != null) {
+            Hibernate.initialize(record.getReviewedBy());
         }
     }
 }

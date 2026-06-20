@@ -42,6 +42,15 @@ public class Shift {
 
     private String remarks;
 
+    @Column(nullable = false)
+    private Integer actualHoles = 0;
+
+    @Column(nullable = false)
+    private Boolean remainingCleared = false;
+
+    @Column(nullable = false)
+    private Boolean misfireHandled = true;
+
     private LocalDateTime createdAt;
 
     private LocalDateTime updatedAt;
@@ -127,6 +136,30 @@ public class Shift {
 
     public void setRemarks(String remarks) {
         this.remarks = remarks;
+    }
+
+    public Integer getActualHoles() {
+        return actualHoles;
+    }
+
+    public void setActualHoles(Integer actualHoles) {
+        this.actualHoles = actualHoles;
+    }
+
+    public Boolean getRemainingCleared() {
+        return remainingCleared;
+    }
+
+    public void setRemainingCleared(Boolean remainingCleared) {
+        this.remainingCleared = remainingCleared;
+    }
+
+    public Boolean getMisfireHandled() {
+        return misfireHandled;
+    }
+
+    public void setMisfireHandled(Boolean misfireHandled) {
+        this.misfireHandled = misfireHandled;
     }
 
     public LocalDateTime getCreatedAt() {

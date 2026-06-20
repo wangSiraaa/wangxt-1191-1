@@ -5,5 +5,6 @@ public enum AnomalyType {
     QUANTITY_MISMATCH,
     NOT_RETURNED,
     DAMAGE,
+    MISFIRE,
     OTHER
 }

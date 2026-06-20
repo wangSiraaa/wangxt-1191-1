@@ -16,7 +16,10 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 @Service
 
@@ -48,35 +51,46 @@ public class InboundService {
         PickupApplication application = applicationRepository.findById(request.getApplicationId())
                 .orElseThrow(() -> new BusinessException("申请单不存在"));
 
-        if (application.getStatus() != ApplicationStatus.OUTBOUND_COMPLETED) {
-            throw new BusinessException("申请单未完成出库，无法回库");
+        if (application.getStatus() != ApplicationStatus.OUTBOUND_COMPLETED
+                && application.getStatus() != ApplicationStatus.INBOUND_COMPLETED) {
+            throw new BusinessException("申请单状态异常，当前状态: " + application.getStatus() + "，无法回库");
         }
 
         Explosive explosive = explosiveRepository.findBySerialNo(request.getExplosiveSerialNo())
                 .orElseThrow(() -> new BusinessException("器材不存在，编号: " + request.getExplosiveSerialNo()));
 
-        List<OutboundRecord> outboundRecords = outboundRepository.findByApplicationIdAndType(
+        List<OutboundRecord> outboundRecordsByType = outboundRepository.findByApplicationIdAndType(
                 application.getId(), explosive.getType());
+        List<OutboundRecord> allOutboundRecords = outboundRepository.findByApplicationId(application.getId());
 
-        int totalOutbound = outboundRecords.stream()
+        int totalOutboundBySerial = outboundRecordsByType.stream()
                 .filter(r -> r.getExplosiveSerialNo().equals(request.getExplosiveSerialNo()))
                 .mapToInt(OutboundRecord::getQuantity)
                 .sum();
 
-        if (totalOutbound == 0) {
-            throw new BusinessException("该器材未从此申请单出库");
+        if (totalOutboundBySerial == 0) {
+            Set<String> validSerials = outboundRecordsByType.stream()
+                    .map(OutboundRecord::getExplosiveSerialNo)
+                    .collect(Collectors.toSet());
+            throw new BusinessException(String.format("器材编号[%s]未从此申请单出库。本申请出库的%s编号: %s",
+                    request.getExplosiveSerialNo(),
+                    explosive.getType() == ExplosiveType.DETONATOR ? "雷管" : "炸药",
+                    validSerials));
         }
 
         int totalQuantity = request.getUsedQuantity() + request.getReturnedQuantity();
-        if (totalQuantity != totalOutbound) {
-            throw new BusinessException(String.format("数量不匹配。出库: %d, 使用+退回: %d",
-                    totalOutbound, totalQuantity));
+        if (totalQuantity != totalOutboundBySerial) {
+            throw new BusinessException(String.format(
+                    "器材编号[%s]数量不匹配。出库: %d, 使用: %d + 退回: %d = %d，必须逐项核销完成",
+                    request.getExplosiveSerialNo(), totalOutboundBySerial,
+                    request.getUsedQuantity(), request.getReturnedQuantity(), totalQuantity));
         }
 
-        int alreadyReturned = inboundRepository.sumReturnedQuantityByApplicationIdAndType(
-                application.getId(), explosive.getType());
-        int alreadyUsed = inboundRepository.sumUsedQuantityByApplicationIdAndType(
-                application.getId(), explosive.getType());
+        int alreadyVerified = inboundRepository.sumVerifiedByApplicationIdAndSerialNo(
+                application.getId(), request.getExplosiveSerialNo());
+        if (alreadyVerified >= totalOutboundBySerial) {
+            throw new BusinessException(String.format("器材编号[%s]已完成核销，无需重复操作", request.getExplosiveSerialNo()));
+        }
 
         InboundRecord record = new InboundRecord();
         record.setInboundNo("IN" + LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMddHHmmss")));
@@ -98,41 +112,81 @@ public class InboundService {
 
         inboundRepository.save(record);
 
-        int totalReturnedDetonators = alreadyReturned +
-                (explosive.getType() == ExplosiveType.DETONATOR ? request.getReturnedQuantity() : 0);
-        int totalReturnedExplosives = alreadyReturned +
-                (explosive.getType() == ExplosiveType.EXPLOSIVE ? request.getReturnedQuantity() : 0);
+        int totalReturnedDetonators = inboundRepository.sumReturnedQuantityByApplicationIdAndType(
+                application.getId(), ExplosiveType.DETONATOR);
+        int totalReturnedExplosives = inboundRepository.sumReturnedQuantityByApplicationIdAndType(
+                application.getId(), ExplosiveType.EXPLOSIVE);
 
-        int totalUsedDetonators = alreadyUsed +
-                (explosive.getType() == ExplosiveType.DETONATOR ? request.getUsedQuantity() : 0);
-        int totalUsedExplosives = alreadyUsed +
-                (explosive.getType() == ExplosiveType.EXPLOSIVE ? request.getUsedQuantity() : 0);
+        int totalUsedDetonators = inboundRepository.sumUsedQuantityByApplicationIdAndType(
+                application.getId(), ExplosiveType.DETONATOR);
+        int totalUsedExplosives = inboundRepository.sumUsedQuantityByApplicationIdAndType(
+                application.getId(), ExplosiveType.EXPLOSIVE);
 
         int totalOutboundDetonators = outboundRepository.sumQuantityByApplicationIdAndType(
                 application.getId(), ExplosiveType.DETONATOR);
         int totalOutboundExplosives = outboundRepository.sumQuantityByApplicationIdAndType(
                 application.getId(), ExplosiveType.EXPLOSIVE);
 
-        if (totalReturnedDetonators + totalUsedDetonators >= totalOutboundDetonators &&
-                totalReturnedExplosives + totalUsedExplosives >= totalOutboundExplosives) {
+        boolean detonatorsBalanced = (totalReturnedDetonators + totalUsedDetonators) >= totalOutboundDetonators;
+        boolean explosivesBalanced = (totalReturnedExplosives + totalUsedExplosives) >= totalOutboundExplosives;
 
-            if (totalReturnedDetonators < totalOutboundDetonators ||
-                    totalReturnedExplosives < totalOutboundExplosives) {
-                int unreturnedDetonators = totalOutboundDetonators - totalReturnedDetonators - totalUsedDetonators;
-                int unreturnedExplosives = totalOutboundExplosives - totalReturnedExplosives - totalUsedExplosives;
+        if (detonatorsBalanced && explosivesBalanced) {
+            int unreturnedDetonators = totalOutboundDetonators - totalReturnedDetonators - totalUsedDetonators;
+            int unreturnedExplosives = totalOutboundExplosives - totalReturnedExplosives - totalUsedExplosives;
 
-                if (unreturnedDetonators > 0 || unreturnedExplosives > 0) {
-                    String description = String.format("存在未退回器材，雷管: %d发, 炸药: %dkg",
-                            Math.max(0, unreturnedDetonators), Math.max(0, unreturnedExplosives));
-                    recordAnomaly(application.getShift(), application, AnomalyType.NOT_RETURNED,
-                            description, storekeeper);
+            if (unreturnedDetonators > 0 || unreturnedExplosives > 0) {
+                String description = String.format("存在未退回器材，雷管: %d发, 炸药: %dkg",
+                        Math.max(0, unreturnedDetonators), Math.max(0, unreturnedExplosives));
+                recordAnomaly(application.getShift(), application, AnomalyType.NOT_RETURNED,
+                        description, storekeeper);
+            }
+
+            Set<String> outboundDetonatorSerials = allOutboundRecords.stream()
+                    .filter(r -> r.getType() == ExplosiveType.DETONATOR)
+                    .map(OutboundRecord::getExplosiveSerialNo)
+                    .collect(Collectors.toSet());
+            Set<String> outboundExplosiveSerials = allOutboundRecords.stream()
+                    .filter(r -> r.getType() == ExplosiveType.EXPLOSIVE)
+                    .map(OutboundRecord::getExplosiveSerialNo)
+                    .collect(Collectors.toSet());
+
+            Set<String> inboundDetonatorSerials = new HashSet<>();
+            Set<String> inboundExplosiveSerials = new HashSet<>();
+            inboundRepository.findByApplicationId(application.getId()).forEach(r -> {
+                if (r.getType() == ExplosiveType.DETONATOR) {
+                    inboundDetonatorSerials.add(r.getExplosiveSerialNo());
+                } else {
+                    inboundExplosiveSerials.add(r.getExplosiveSerialNo());
                 }
+            });
+
+            if (!inboundDetonatorSerials.containsAll(outboundDetonatorSerials)) {
+                Set<String> missing = new HashSet<>(outboundDetonatorSerials);
+                missing.removeAll(inboundDetonatorSerials);
+                throw new BusinessException(String.format("还有雷管编号未完成核销: %s，请逐项核销完成", missing));
+            }
+            if (!inboundExplosiveSerials.containsAll(outboundExplosiveSerials)) {
+                Set<String> missing = new HashSet<>(outboundExplosiveSerials);
+                missing.removeAll(inboundExplosiveSerials);
+                throw new BusinessException(String.format("还有炸药编号未完成核销: %s，请逐项核销完成", missing));
             }
 
             application.setStatus(ApplicationStatus.INBOUND_COMPLETED);
             applicationRepository.save(application);
 
             Shift shift = application.getShift();
+            if (totalReturnedDetonators.equals(totalOutboundDetonators - totalUsedDetonators)
+                    && totalReturnedExplosives.equals(totalOutboundExplosives - totalUsedExplosives)) {
+                shift.setRemainingCleared(true);
+            } else {
+                shift.setRemainingCleared(false);
+            }
+
+            long unresolvedMisfire = anomalyRecordRepository.findUnresolvedByShiftId(shift.getId()).stream()
+                    .filter(a -> a.getType() == AnomalyType.MISFIRE)
+                    .count();
+            shift.setMisfireHandled(unresolvedMisfire == 0);
+
             shift.setStatus(ShiftStatus.WAITING_VERIFY);
             shiftRepository.save(shift);
         }
