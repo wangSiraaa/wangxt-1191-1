@@ -1,5 +1,6 @@
 package com.mine.explosive.entity;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import jakarta.persistence.*;
 
 
@@ -32,6 +33,7 @@ public class WorkPlan {
 
     private LocalDate workDate;
 
+    @JsonIgnore
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "blaster_id")
     private User blaster;

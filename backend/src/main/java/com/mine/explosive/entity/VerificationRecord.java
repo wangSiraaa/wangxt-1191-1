@@ -1,5 +1,6 @@
 package com.mine.explosive.entity;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import jakarta.persistence.*;
 
 
@@ -25,6 +26,7 @@ public class VerificationRecord {
     @JoinColumn(name = "application_id", nullable = false)
     private PickupApplication application;
 
+    @JsonIgnore
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "safety_officer_id", nullable = false)
     private User safetyOfficer;

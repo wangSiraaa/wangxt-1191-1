@@ -1,5 +1,6 @@
 package com.mine.explosive.entity;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.mine.explosive.enums.ExplosiveType;
 import jakarta.persistence.*;
 
@@ -36,10 +37,12 @@ public class OutboundRecord {
     @Column(nullable = false)
     private Integer quantity;
 
+    @JsonIgnore
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "storekeeper_id", nullable = false)
     private User storekeeper;
 
+    @JsonIgnore
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "blaster_id", nullable = false)
     private User blaster;

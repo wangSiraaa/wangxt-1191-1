@@ -12,6 +12,7 @@ import com.mine.explosive.repository.PickupApplicationRepository;
 import com.mine.explosive.repository.ShiftRepository;
 import com.mine.explosive.repository.VerificationRecordRepository;
 import com.mine.explosive.repository.WorkPlanRepository;
+import com.mine.explosive.util.HibernateUtil;
 
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -43,42 +44,54 @@ public class ShiftService {
             throw new BusinessException("您存在未关闭的当班作业，请先关闭后再创建新作业");
         }
 
+        if (request.getWorkPlanId() == null) {
+            throw new BusinessException("请选择作业计划");
+        }
+
+        WorkPlan workPlan = workPlanRepository.findById(request.getWorkPlanId())
+                .orElseThrow(() -> new BusinessException("作业计划不存在"));
+
         Shift shift = new Shift();
         shift.setShiftNo("SHIFT" + LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMddHHmmss")));
-        shift.setWorkFace(request.getWorkFace());
+        shift.setWorkFace(workPlan.getWorkFace());
+        shift.setWorkPlan(workPlan);
         shift.setBlaster(blaster);
         shift.setStatus(ShiftStatus.OPEN);
         shift.setStartTime(LocalDateTime.now());
         shift.setRemarks(request.getRemarks());
 
-        if (request.getWorkPlanId() != null) {
-            WorkPlan workPlan = workPlanRepository.findById(request.getWorkPlanId())
-                    .orElseThrow(() -> new BusinessException("作业计划不存在"));
-            shift.setWorkPlan(workPlan);
-        }
-
         return shiftRepository.save(shift);
     }
 
     public Shift getShift(Long id) {
-        return shiftRepository.findById(id)
+        Shift shift = shiftRepository.findById(id)
                 .orElseThrow(() -> new BusinessException("当班作业不存在"));
+        HibernateUtil.initShift(shift);
+        return shift;
     }
 
     public List<Shift> getShiftsByBlaster(Long blasterId) {
-        return shiftRepository.findByBlasterId(blasterId);
+        List<Shift> shifts = shiftRepository.findByBlasterId(blasterId);
+        shifts.forEach(HibernateUtil::initShift);
+        return shifts;
     }
 
     public List<Shift> getActiveShiftsByBlaster(Long blasterId) {
-        return shiftRepository.findActiveShiftsByBlasterId(blasterId);
+        List<Shift> shifts = shiftRepository.findActiveShiftsByBlasterId(blasterId);
+        shifts.forEach(HibernateUtil::initShift);
+        return shifts;
     }
 
     public List<Shift> getAllShifts() {
-        return shiftRepository.findAll();
+        List<Shift> shifts = shiftRepository.findAll();
+        shifts.forEach(HibernateUtil::initShift);
+        return shifts;
     }
 
     public List<Shift> getShiftsByStatus(ShiftStatus status) {
-        return shiftRepository.findByStatus(status);
+        List<Shift> shifts = shiftRepository.findByStatus(status);
+        shifts.forEach(HibernateUtil::initShift);
+        return shifts;
     }
 
     @Transactional

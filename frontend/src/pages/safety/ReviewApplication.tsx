@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
-import { Form, Select, Button, Card, Typography, message, Space, Table, Tag, Divider, Modal, Input, Empty } from 'antd';
-import { ArrowLeftOutlined, CheckOutlined, CloseOutlined } from '@ant-design/icons';
+import { Form, Select, Button, Card, Typography, message, Space, Table, Tag, Divider, Modal, Input, Empty, Descriptions, Alert, Row, Col, Progress, Statistic } from 'antd';
+import { ArrowLeftOutlined, CheckOutlined, CloseOutlined, WarningOutlined, SafetyOutlined, ExclamationCircleOutlined } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import { applicationApi } from '../../services/api';
 import type { PickupApplication } from '../../types';
@@ -9,6 +9,9 @@ import dayjs from 'dayjs';
 const { Title, Text, Paragraph } = Typography;
 const { Option } = Select;
 const { TextArea } = Input;
+
+const DETONATOR_TOLERANCE = 10;
+const EXPLOSIVE_TOLERANCE = 10;
 
 export default function ReviewApplication() {
   const navigate = useNavigate();
@@ -51,8 +54,8 @@ export default function ReviewApplication() {
       setLoading(true);
       const res = await applicationApi.review({
         applicationId: selectedApp.id,
-        action: reviewAction,
-        reviewRemark: values.reviewRemark,
+        approved: reviewAction === 'APPROVED',
+        remark: values.reviewRemark,
       });
       if (res.success) {
         message.success(reviewAction === 'APPROVED' ? '已批准' : '已拒绝');
@@ -67,6 +70,34 @@ export default function ReviewApplication() {
     } finally {
       setLoading(false);
     }
+  };
+
+  const calculateAnalysis = (app: PickupApplication) => {
+    const wp = app.shift?.workPlan;
+    if (!wp) return null;
+    const designedHoles = wp.designedHoles;
+    const designedDetonators = wp.estimatedDetonators;
+    const designedExplosives = wp.estimatedExplosives;
+    const appDetonators = app.detonatorQuantity;
+    const appExplosives = app.explosiveQuantity;
+
+    const detonatorDiff = designedDetonators > 0
+      ? (appDetonators - designedDetonators) * 100 / designedDetonators
+      : 0;
+    const explosiveDiff = designedExplosives > 0
+      ? (appExplosives - designedExplosives) * 100 / designedExplosives
+      : 0;
+
+    return {
+      designedHoles,
+      designedDetonators,
+      designedExplosives,
+      detonatorDiff,
+      explosiveDiff,
+      holeCountMatch: appDetonators === designedHoles,
+      detonatorInTolerance: Math.abs(detonatorDiff) <= DETONATOR_TOLERANCE,
+      explosiveInTolerance: Math.abs(explosiveDiff) <= EXPLOSIVE_TOLERANCE,
+    };
   };
 
   const columns = [
@@ -87,14 +118,20 @@ export default function ReviewApplication() {
       title: '申请雷管',
       dataIndex: 'detonatorQuantity',
       render: (v: number, record: PickupApplication) => {
-        const designed = record.shift.workPlan?.estimatedDetonators || 0;
-        const diff = v - designed;
+        const analysis = calculateAnalysis(record);
+        if (!analysis) return <span>{v} 发</span>;
+        const tagColor = analysis.detonatorInTolerance && analysis.holeCountMatch ? 'green' : 'orange';
         return (
-          <Space>
-            <span>{v} 发</span>
-            {diff !== 0 && (
-              <Tag color={diff > 0 ? 'orange' : 'blue'}>
-                {diff > 0 ? '+' : ''}{diff}
+          <Space direction="vertical" size={2}>
+            <span><Text strong>{v}</Text> 发 / 设计 {analysis.designedDetonators} 发</span>
+            {!analysis.holeCountMatch && (
+              <Tag icon={<ExclamationCircleOutlined />} color="warning">
+                孔数不匹配
+              </Tag>
+            )}
+            {!analysis.detonatorInTolerance && (
+              <Tag icon={<WarningOutlined />} color={tagColor}>
+                偏差{analysis.detonatorDiff >= 0 ? '+' : ''}{analysis.detonatorDiff.toFixed(1)}%
               </Tag>
             )}
           </Space>
@@ -105,14 +142,15 @@ export default function ReviewApplication() {
       title: '申请炸药',
       dataIndex: 'explosiveQuantity',
       render: (v: number, record: PickupApplication) => {
-        const designed = record.shift.workPlan?.estimatedExplosives || 0;
-        const diff = v - designed;
+        const analysis = calculateAnalysis(record);
+        if (!analysis) return <span>{v} kg</span>;
+        const tagColor = analysis.explosiveInTolerance ? 'green' : 'orange';
         return (
-          <Space>
-            <span>{v} kg</span>
-            {diff !== 0 && (
-              <Tag color={diff > 0 ? 'orange' : 'blue'}>
-                {diff > 0 ? '+' : ''}{diff}
+          <Space direction="vertical" size={2}>
+            <span><Text strong>{v}</Text> kg / 设计 {analysis.designedExplosives} kg</span>
+            {!analysis.explosiveInTolerance && (
+              <Tag icon={<WarningOutlined />} color={tagColor}>
+                偏差{analysis.explosiveDiff >= 0 ? '+' : ''}{analysis.explosiveDiff.toFixed(1)}%
               </Tag>
             )}
           </Space>
@@ -146,6 +184,22 @@ export default function ReviewApplication() {
     },
   ];
 
+  const renderMismatchAnalysis = (app: PickupApplication) => {
+    const analysis = calculateAnalysis(app);
+    if (!analysis) return null;
+    const issues: string[] = [];
+    if (!analysis.holeCountMatch) {
+      issues.push(`雷管数量与设计孔数不匹配：设计孔数${analysis.designedHoles}个，申请雷管${app.detonatorQuantity}发`);
+    }
+    if (!analysis.detonatorInTolerance) {
+      issues.push(`雷管数量超出设计量±${DETONATOR_TOLERANCE}%：设计${analysis.designedDetonators}发，申请${app.detonatorQuantity}发（偏差${analysis.detonatorDiff >= 0 ? '+' : ''}${analysis.detonatorDiff.toFixed(1)}%）`);
+    }
+    if (!analysis.explosiveInTolerance) {
+      issues.push(`炸药数量超出设计量±${EXPLOSIVE_TOLERANCE}%：设计${analysis.designedExplosives}kg，申请${app.explosiveQuantity}kg（偏差${analysis.explosiveDiff >= 0 ? '+' : ''}${analysis.explosiveDiff.toFixed(1)}%）`);
+    }
+    return issues;
+  };
+
   return (
     <div>
       <div style={{ display: 'flex', alignItems: 'center', marginBottom: '24px' }}>
@@ -156,12 +210,20 @@ export default function ReviewApplication() {
       </div>
 
       <Card style={{ marginBottom: '24px' }}>
-        <Paragraph type="secondary">
-          <Text strong>复核规则说明：</Text>
-          <br />• 当领用雷管数量与设计孔数偏差超过 ±10% 时，需要安全负责人复核
-          <br />• 当领用炸药数量与设计用量偏差超过 ±200% 时，需要安全负责人复核
-          <br />• 复核通过后库管可进行出库操作，拒绝后需要爆破员重新提交申请
-        </Paragraph>
+        <Alert
+          type="warning"
+          showIcon
+          icon={<SafetyOutlined />}
+          message="安全复核规则"
+          description={
+            <ul style={{ margin: 0, paddingLeft: '20px' }}>
+              <li>雷管数量必须与设计孔数完全一致，否则需要复核</li>
+              <li>雷管数量与设计量偏差超过 ±{DETONATOR_TOLERANCE}%，需要复核</li>
+              <li>炸药数量与设计量偏差超过 ±{EXPLOSIVE_TOLERANCE}%，需要复核</li>
+              <li>复核通过后库管可进行出库操作，拒绝后需要爆破员重新提交申请</li>
+            </ul>
+          }
+        />
       </Card>
 
       <Card title="待复核申请列表">
@@ -178,9 +240,15 @@ export default function ReviewApplication() {
       </Card>
 
       <Modal
-        title={reviewAction === 'APPROVED' ? '批准申请' : '拒绝申请'}
+        title={
+          <Space>
+            <SafetyOutlined style={{ color: reviewAction === 'APPROVED' ? '#52c41a' : '#ff4d4f' }} />
+            <span>{reviewAction === 'APPROVED' ? '批准领用申请' : '拒绝领用申请'}</span>
+          </Space>
+        }
         open={reviewModalVisible}
         onCancel={() => setReviewModalVisible(false)}
+        width={720}
         footer={[
           <Button key="cancel" onClick={() => setReviewModalVisible(false)}>取消</Button>,
           <Button
@@ -196,30 +264,136 @@ export default function ReviewApplication() {
       >
         {selectedApp && (
           <Space direction="vertical" size="middle" style={{ width: '100%' }}>
-            <div>
-              <Text strong>申请单：</Text>
-              {selectedApp.applicationNo}
-            </div>
-            <div>
-              <Text strong>爆破员：</Text>
-              {selectedApp.blaster.name}
-            </div>
-            <div>
-              <Text strong>申请数量：</Text>
-              雷管 {selectedApp.detonatorQuantity} 发，炸药 {selectedApp.explosiveQuantity} kg
-            </div>
-            <div>
-              <Text strong>设计数量：</Text>
-              雷管 {selectedApp.shift.workPlan?.estimatedDetonators || '无'} 发，炸药 {selectedApp.shift.workPlan?.estimatedExplosives || '无'} kg
-            </div>
+            {selectedApp.shift.workPlan && (
+              <Card
+                size="small"
+                title={
+                  <Space>
+                    <SafetyOutlined style={{ color: '#1890ff' }} />
+                    <span>作业计划设计信息</span>
+                    <Tag color="blue">{selectedApp.shift.workPlan.planNo}</Tag>
+                  </Space>
+                }
+                style={{ backgroundColor: '#f0f8ff' }}
+              >
+                <Descriptions column={2} size="small">
+                  <Descriptions.Item label="作业面">{selectedApp.shift.workFace}</Descriptions.Item>
+                  <Descriptions.Item label="设计孔数">
+                    <Text type="danger" strong>{selectedApp.shift.workPlan.designedHoles} 个</Text>
+                  </Descriptions.Item>
+                  <Descriptions.Item label="设计雷管">
+                    <Text strong>{selectedApp.shift.workPlan.estimatedDetonators} 发</Text>
+                  </Descriptions.Item>
+                  <Descriptions.Item label="设计炸药">
+                    <Text strong>{selectedApp.shift.workPlan.estimatedExplosives} kg</Text>
+                  </Descriptions.Item>
+                </Descriptions>
+              </Card>
+            )}
+
+            {selectedApp.reviewRemark && (
+              <Alert
+                type="warning"
+                showIcon
+                icon={<WarningOutlined />}
+                message="系统检测到的不匹配问题"
+                description={selectedApp.reviewRemark}
+              />
+            )}
+
+            {(() => {
+              const issues = renderMismatchAnalysis(selectedApp);
+              const analysis = calculateAnalysis(selectedApp);
+              if (!analysis) return null;
+              return (
+                <Row gutter={[16, 16]}>
+                  <Col span={12}>
+                    <Card size="small" title="雷管数量核对">
+                      <Statistic
+                        title="申请/设计"
+                        value={`${selectedApp.detonatorQuantity} / ${analysis.designedDetonators}`}
+                        suffix="发"
+                        valueStyle={{ color: analysis.detonatorInTolerance && analysis.holeCountMatch ? '#3f8600' : '#cf1322' }}
+                      />
+                      <div style={{ marginTop: '12px' }}>
+                        <Progress
+                          percent={Math.round((selectedApp.detonatorQuantity / analysis.designedDetonators) * 100)}
+                          status={analysis.detonatorInTolerance && analysis.holeCountMatch ? 'success' : 'exception'}
+                        />
+                      </div>
+                      <div style={{ marginTop: '8px' }}>
+                        <Space direction="vertical" size={4}>
+                          {analysis.holeCountMatch ? (
+                            <Tag color="success">✓ 与设计孔数匹配</Tag>
+                          ) : (
+                            <Tag color="warning">✗ 孔数不匹配</Tag>
+                          )}
+                          {analysis.detonatorInTolerance ? (
+                            <Tag color="success">✓ 偏差在±{DETONATOR_TOLERANCE}%内</Tag>
+                          ) : (
+                            <Tag color="error">✗ 偏差{analysis.detonatorDiff >= 0 ? '+' : ''}{analysis.detonatorDiff.toFixed(1)}%</Tag>
+                          )}
+                        </Space>
+                      </div>
+                    </Card>
+                  </Col>
+                  <Col span={12}>
+                    <Card size="small" title="炸药数量核对">
+                      <Statistic
+                        title="申请/设计"
+                        value={`${selectedApp.explosiveQuantity} / ${analysis.designedExplosives}`}
+                        suffix="kg"
+                        valueStyle={{ color: analysis.explosiveInTolerance ? '#3f8600' : '#cf1322' }}
+                      />
+                      <div style={{ marginTop: '12px' }}>
+                        <Progress
+                          percent={Math.round((selectedApp.explosiveQuantity / analysis.designedExplosives) * 100)}
+                          status={analysis.explosiveInTolerance ? 'success' : 'exception'}
+                        />
+                      </div>
+                      <div style={{ marginTop: '8px' }}>
+                        <Space direction="vertical" size={4}>
+                          {analysis.explosiveInTolerance ? (
+                            <Tag color="success">✓ 偏差在±{EXPLOSIVE_TOLERANCE}%内</Tag>
+                          ) : (
+                            <Tag color="error">✗ 偏差{analysis.explosiveDiff >= 0 ? '+' : ''}{analysis.explosiveDiff.toFixed(1)}%</Tag>
+                          )}
+                        </Space>
+                      </div>
+                    </Card>
+                  </Col>
+                </Row>
+              );
+            })()}
+
             <Divider style={{ margin: '8px 0' }} />
+
+            <Descriptions column={2} size="small" bordered>
+              <Descriptions.Item label="申请单号">{selectedApp.applicationNo}</Descriptions.Item>
+              <Descriptions.Item label="爆破员">{selectedApp.blaster.name}</Descriptions.Item>
+              <Descriptions.Item label="当班作业">{selectedApp.shift.shiftNo}</Descriptions.Item>
+              <Descriptions.Item label="申请时间">
+                {dayjs(selectedApp.createdAt).format('YYYY-MM-DD HH:mm')}
+              </Descriptions.Item>
+            </Descriptions>
+
             <Form form={form} layout="vertical">
               <Form.Item
                 name="reviewRemark"
-                label={reviewAction === 'APPROVED' ? '批准意见（可选）' : '拒绝原因（必填）'}
+                label={
+                  <Space>
+                    {reviewAction === 'APPROVED' ? '批准意见' : '拒绝原因'}
+                    {reviewAction === 'REJECTED' && <Text type="danger">（必填）</Text>}
+                  </Space>
+                }
                 rules={reviewAction === 'REJECTED' ? [{ required: true, message: '请填写拒绝原因' }] : []}
               >
-                <TextArea rows={3} placeholder={reviewAction === 'APPROVED' ? '请输入意见' : '请说明拒绝原因'} />
+                <TextArea
+                  rows={4}
+                  placeholder={reviewAction === 'APPROVED'
+                    ? '请输入批准意见（可选），例如：经现场核实作业条件变化，同意增加用量'
+                    : '请详细说明拒绝原因，例如：数量偏差过大，请重新核实设计参数'}
+                />
               </Form.Item>
             </Form>
           </Space>

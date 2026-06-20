@@ -1,5 +1,6 @@
 package com.mine.explosive.entity;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.mine.explosive.enums.ApplicationStatus;
 import jakarta.persistence.*;
 
@@ -22,6 +23,7 @@ public class PickupApplication {
     @JoinColumn(name = "shift_id", nullable = false)
     private Shift shift;
 
+    @JsonIgnore
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "blaster_id", nullable = false)
     private User blaster;
@@ -40,6 +42,7 @@ public class PickupApplication {
 
     private String reviewRemark;
 
+    @JsonIgnore
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "reviewer_id")
     private User reviewer;

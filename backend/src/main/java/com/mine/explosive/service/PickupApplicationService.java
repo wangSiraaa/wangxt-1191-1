@@ -10,6 +10,7 @@ import com.mine.explosive.enums.Role;
 import com.mine.explosive.enums.ShiftStatus;
 import com.mine.explosive.exception.BusinessException;
 import com.mine.explosive.repository.*;
+import com.mine.explosive.util.HibernateUtil;
 
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -84,17 +85,42 @@ public class PickupApplicationService {
             int designedExplosives = workPlan.getEstimatedExplosives();
             int designedHoles = workPlan.getDesignedHoles();
 
-            boolean detonatorMismatch = Math.abs(request.getDetonatorQuantity() - designedDetonators) > designedHoles * 0.1;
-            boolean explosiveMismatch = Math.abs(request.getExplosiveQuantity() - designedExplosives) > designedHoles * 2;
+            double detonatorPerHole = designedHoles > 0 ? designedDetonators * 1.0 / designedHoles : 1.0;
+            double explosivePerHole = designedHoles > 0 ? designedExplosives * 1.0 / designedHoles : 1.0;
+            double expectedDetonatorsByHoles = designedHoles * detonatorPerHole;
+            double expectedExplosivesByHoles = designedHoles * explosivePerHole;
 
-            if (detonatorMismatch || explosiveMismatch) {
+            double detonatorDiffPercent = designedDetonators > 0 
+                ? Math.abs(request.getDetonatorQuantity() - designedDetonators) * 100.0 / designedDetonators 
+                : 100.0;
+            double explosiveDiffPercent = designedExplosives > 0 
+                ? Math.abs(request.getExplosiveQuantity() - designedExplosives) * 100.0 / designedExplosives 
+                : 100.0;
+
+            boolean holeCountMismatch = request.getDetonatorQuantity() != designedHoles;
+            boolean detonatorMismatch = detonatorDiffPercent > 10.0;
+            boolean explosiveMismatch = explosiveDiffPercent > 10.0;
+
+            if (holeCountMismatch || detonatorMismatch || explosiveMismatch) {
                 status = ApplicationStatus.NEED_REVIEW;
-                reviewRemark = String.format("领用数量与设计孔数不匹配。设计孔数: %d, 设计雷管: %d, 申请雷管: %d, 设计炸药: %dkg, 申请炸药: %dkg",
-                        designedHoles, designedDetonators, request.getDetonatorQuantity(),
-                        designedExplosives, request.getExplosiveQuantity());
-
+                StringBuilder sb = new StringBuilder();
+                if (holeCountMismatch) {
+                    sb.append(String.format("雷管数量与设计孔数不匹配: 设计孔数%d个, 设计雷管%d发(每孔%.1f发), 申请雷管%d发; ",
+                            designedHoles, designedDetonators, detonatorPerHole, request.getDetonatorQuantity()));
+                }
+                if (detonatorMismatch) {
+                    sb.append(String.format("雷管数量与设计量偏差%.1f%%(设计%d发, 申请%d发); ",
+                            detonatorDiffPercent, designedDetonators, request.getDetonatorQuantity()));
+                }
+                if (explosiveMismatch) {
+                    sb.append(String.format("炸药数量与设计量偏差%.1f%%(设计%dkg, 申请%dkg); ",
+                            explosiveDiffPercent, designedExplosives, request.getExplosiveQuantity()));
+                }
+                reviewRemark = sb.toString();
                 recordAnomaly(shift, null, AnomalyType.QUANTITY_MISMATCH, reviewRemark, blaster);
             }
+        } else {
+            throw new BusinessException("当班作业未关联作业计划，无法提交领用申请");
         }
 
         Integer availableDetonators = explosiveRepository.sumAvailableQuantityByType(
@@ -147,28 +173,40 @@ public class PickupApplicationService {
         application.setReviewRemark(request.getRemark());
         application.setReviewedAt(LocalDateTime.now());
 
-        return applicationRepository.save(application);
+        PickupApplication saved = applicationRepository.save(application);
+        HibernateUtil.initPickupApplication(saved);
+        return saved;
     }
 
     public PickupApplication getApplication(Long id) {
-        return applicationRepository.findById(id)
+        PickupApplication application = applicationRepository.findById(id)
                 .orElseThrow(() -> new BusinessException("申请单不存在"));
+        HibernateUtil.initPickupApplication(application);
+        return application;
     }
 
     public List<PickupApplication> getApplicationsByShift(Long shiftId) {
-        return applicationRepository.findByShiftId(shiftId);
+        List<PickupApplication> applications = applicationRepository.findByShiftId(shiftId);
+        applications.forEach(HibernateUtil::initPickupApplication);
+        return applications;
     }
 
     public List<PickupApplication> getApplicationsByBlaster(Long blasterId) {
-        return applicationRepository.findByBlasterId(blasterId);
+        List<PickupApplication> applications = applicationRepository.findByBlasterId(blasterId);
+        applications.forEach(HibernateUtil::initPickupApplication);
+        return applications;
     }
 
     public List<PickupApplication> getApplicationsNeedReview() {
-        return applicationRepository.findApplicationsNeedReview();
+        List<PickupApplication> applications = applicationRepository.findApplicationsNeedReview();
+        applications.forEach(HibernateUtil::initPickupApplication);
+        return applications;
     }
 
     public List<PickupApplication> getAllApplications() {
-        return applicationRepository.findAll();
+        List<PickupApplication> applications = applicationRepository.findAll();
+        applications.forEach(HibernateUtil::initPickupApplication);
+        return applications;
     }
 
     private void recordAnomaly(Shift shift, PickupApplication application, AnomalyType type,

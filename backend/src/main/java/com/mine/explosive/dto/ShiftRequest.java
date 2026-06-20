@@ -1,31 +1,21 @@
 package com.mine.explosive.dto;
 
-import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotNull;
 
 
 
 public class ShiftRequest {
     public ShiftRequest() {
     }
-    public ShiftRequest(String workFace, Long workPlanId, String remarks) {
-        this.workFace = workFace;
+    public ShiftRequest(Long workPlanId, String remarks) {
         this.workPlanId = workPlanId;
         this.remarks = remarks;
     }
-    @NotBlank(message = "作业面不能为空")
-    private String workFace;
 
+    @NotNull(message = "请选择作业计划")
     private Long workPlanId;
 
     private String remarks;
-
-    public String getWorkFace() {
-        return workFace;
-    }
-
-    public void setWorkFace(String workFace) {
-        this.workFace = workFace;
-    }
 
     public Long getWorkPlanId() {
         return workPlanId;

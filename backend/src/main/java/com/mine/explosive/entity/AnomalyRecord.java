@@ -1,5 +1,6 @@
 package com.mine.explosive.entity;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.mine.explosive.enums.AnomalyType;
 import jakarta.persistence.*;
 
@@ -35,10 +36,12 @@ public class AnomalyRecord {
 
     private Integer anomalyQuantity;
 
+    @JsonIgnore
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "reported_by", nullable = false)
     private User reportedBy;
 
+    @JsonIgnore
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "handled_by")
     private User handledBy;

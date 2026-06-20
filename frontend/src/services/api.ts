@@ -98,4 +98,11 @@ export const explosiveApi = {
     api.get<ApiResponse<any>>('/explosives/stock').then((res) => res.data),
 };
 
+export const workPlanApi = {
+  list: () =>
+    api.get<ApiResponse<any[]>>('/work-plans').then((res) => res.data),
+  getById: (id: number) =>
+    api.get<ApiResponse<any>>(`/work-plans/${id}`).then((res) => res.data),
+};
+
 export default api;

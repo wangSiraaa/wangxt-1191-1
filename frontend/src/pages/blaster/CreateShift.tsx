@@ -1,17 +1,15 @@
 import { useState, useEffect } from 'react';
-import { Form, Input, Select, Button, Card, Typography, message, Space } from 'antd';
-import { ArrowLeftOutlined } from '@ant-design/icons';
+import { Form, Select, Button, Card, Typography, message, Space, Descriptions, Input } from 'antd';
+import { ArrowLeftOutlined, SafetyOutlined } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
-import { shiftApi } from '../../services/api';
+import { shiftApi, workPlanApi } from '../../services/api';
 import type { WorkPlan } from '../../types';
 
-const { Title } = Typography;
-const { TextArea } = Input;
+const { Title, Text } = Typography;
 const { Option } = Select;
 
 interface FormData {
-  workFace: string;
-  workPlanId?: number;
+  workPlanId: number;
   remarks?: string;
 }
 
@@ -20,6 +18,7 @@ export default function CreateShift() {
   const [form] = Form.useForm<FormData>();
   const [loading, setLoading] = useState(false);
   const [workPlans, setWorkPlans] = useState<WorkPlan[]>([]);
+  const [selectedPlan, setSelectedPlan] = useState<WorkPlan | null>(null);
 
   useEffect(() => {
     loadWorkPlans();
@@ -27,10 +26,19 @@ export default function CreateShift() {
 
   const loadWorkPlans = async () => {
     try {
-      const res = await fetch('/api/shifts').then(r => r.json());
+      const res = await workPlanApi.list();
+      if (res.success) {
+        setWorkPlans(res.data);
+      }
     } catch (error) {
       console.error('Failed to load work plans');
+      message.error('加载作业计划失败');
     }
+  };
+
+  const handlePlanChange = (planId: number) => {
+    const plan = workPlans.find(p => p.id === planId);
+    setSelectedPlan(plan || null);
   };
 
   const handleSubmit = async (values: FormData) => {
@@ -62,20 +70,51 @@ export default function CreateShift() {
       <Card style={{ maxWidth: 600 }}>
         <Form form={form} layout="vertical" onFinish={handleSubmit} size="large">
           <Form.Item
-            name="workFace"
-            label="作业面"
-            rules={[{ required: true, message: '请输入作业面' }]}
+            name="workPlanId"
+            label="作业计划"
+            rules={[{ required: true, message: '请选择作业计划' }]}
           >
-            <Select placeholder="请选择或输入作业面">
-              <Option value="1101工作面">1101工作面</Option>
-              <Option value="1202工作面">1202工作面</Option>
-              <Option value="1303工作面">1303工作面</Option>
-              <Option value="1404工作面">1404工作面</Option>
+            <Select
+              placeholder="请选择作业计划"
+              onChange={handlePlanChange}
+              showSearch
+              optionFilterProp="children"
+            >
+              {workPlans.map(plan => (
+                <Option key={plan.id} value={plan.id}>
+                  {plan.planNo} - {plan.workFace}（{plan.designedHoles}孔）
+                </Option>
+              ))}
             </Select>
           </Form.Item>
 
+          {selectedPlan && (
+            <Card
+              size="small"
+              title="作业计划详情"
+              style={{ marginBottom: '24px', backgroundColor: '#f5f5f5' }}
+            >
+              <Descriptions column={2} size="small">
+                <Descriptions.Item label="计划编号">{selectedPlan.planNo}</Descriptions.Item>
+                <Descriptions.Item label="作业面">{selectedPlan.workFace}</Descriptions.Item>
+                <Descriptions.Item label="设计孔数">
+                  <Text type="danger">{selectedPlan.designedHoles} 个</Text>
+                </Descriptions.Item>
+                <Descriptions.Item label="设计雷管">
+                  <Text type="success">{selectedPlan.estimatedDetonators} 发</Text>
+                </Descriptions.Item>
+                <Descriptions.Item label="设计炸药">
+                  <Text type="success">{selectedPlan.estimatedExplosives} kg</Text>
+                </Descriptions.Item>
+              </Descriptions>
+              <div style={{ marginTop: '8px' }}>
+                <Text type="secondary">注：领用数量超出设计量±10%将触发安全负责人复核</Text>
+              </div>
+            </Card>
+          )}
+
           <Form.Item name="remarks" label="备注">
-            <TextArea rows={3} placeholder="请输入备注信息（可选）" />
+            <Input.TextArea rows={3} placeholder="请输入备注信息（可选）" style={{ width: '100%' }} />
           </Form.Item>
 
           <Form.Item>

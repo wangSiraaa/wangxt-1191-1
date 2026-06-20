@@ -1,5 +1,6 @@
 package com.mine.explosive.entity;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.mine.explosive.enums.ShiftStatus;
 import jakarta.persistence.*;
 
@@ -25,6 +26,7 @@ public class Shift {
     @JoinColumn(name = "work_plan_id")
     private WorkPlan workPlan;
 
+    @JsonIgnore
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "blaster_id", nullable = false)
     private User blaster;
